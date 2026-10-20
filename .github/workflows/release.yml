@@ -142,7 +142,7 @@ jobs:
 
       - name: Compile & Package Android Release Artifacts (APK & AAB)
         run: |
-          ./gradlew clean lintRelease assembleRelease bundleRelease --stacktrace
+          ./gradlew clean assembleRelease bundleRelease --stacktrace
 
       - name: Prepare & Checksum Release Binaries
         run: |

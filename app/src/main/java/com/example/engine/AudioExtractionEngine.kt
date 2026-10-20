@@ -116,8 +116,16 @@ class AudioExtractionEngine(private val context: Context) {
                             outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
 
                             val outFormat = decoder.outputFormat
-                            val srcChannels = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT, 2)
-                            val srcSampleRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE, targetSampleRate)
+                            val srcChannels = if (outFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                                outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                            } else {
+                                2
+                            }
+                            val srcSampleRate = if (outFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                                outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                            } else {
+                                targetSampleRate
+                            }
 
                             val pcmBytes = ByteArray(bufferInfo.size)
                             outputBuffer.get(pcmBytes)
