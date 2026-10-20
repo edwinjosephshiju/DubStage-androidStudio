@@ -152,18 +152,15 @@ jobs:
           SOURCE_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
           TARGET_APK="release-artifacts/DubStage-${VERSION_NAME}-arm64-v8a-universal.apk"
           cp "$SOURCE_APK" "$TARGET_APK"
-          # Also provide DemucsStudio alias for backwards-compatibility
-          cp "$SOURCE_APK" "release-artifacts/DemucsStudio-${VERSION_NAME}-arm64-v8a-universal.apk"
 
           # Locate generated AAB
           SOURCE_AAB=$(find app/build/outputs/bundle/release -name "*.aab" | head -n 1)
           TARGET_AAB="release-artifacts/DubStage-${VERSION_NAME}.aab"
           cp "$SOURCE_AAB" "$TARGET_AAB"
-          cp "$SOURCE_AAB" "release-artifacts/DemucsStudio-${VERSION_NAME}.aab"
 
           # Generate cryptographic SHA-256 checksums
           cd release-artifacts
-          sha256sum DubStage-* DemucsStudio-* > SHA256SUMS.txt
+          sha256sum "DubStage-${VERSION_NAME}-arm64-v8a-universal.apk" "DubStage-${VERSION_NAME}.aab" > SHA256SUMS.txt
           cat SHA256SUMS.txt
           cd ..
 
@@ -176,9 +173,7 @@ jobs:
           generate_release_notes: true
           files: |
             release-artifacts/DubStage-${{ env.VERSION_NAME }}-arm64-v8a-universal.apk
-            release-artifacts/DemucsStudio-${{ env.VERSION_NAME }}-arm64-v8a-universal.apk
             release-artifacts/DubStage-${{ env.VERSION_NAME }}.aab
-            release-artifacts/DemucsStudio-${{ env.VERSION_NAME }}.aab
             release-artifacts/SHA256SUMS.txt
           body: |
             ## DubStage Android Release ${{ env.RELEASE_TAG }}
@@ -187,9 +182,7 @@ jobs:
             | Artifact | Type | Target Architecture | Signed Status |
             | :--- | :--- | :--- | :--- |
             | `DubStage-${{ env.VERSION_NAME }}-arm64-v8a-universal.apk` | Sideloadable APK | `arm64-v8a` | ${{ env.PRODUCTION_SIGNED == 'true' && '✅ Production Key' || '⚠️ Self-Signed Fallback' }} |
-            | `DemucsStudio-${{ env.VERSION_NAME }}-arm64-v8a-universal.apk` | Sideloadable APK (Alias) | `arm64-v8a` | ${{ env.PRODUCTION_SIGNED == 'true' && '✅ Production Key' || '⚠️ Self-Signed Fallback' }} |
             | `DubStage-${{ env.VERSION_NAME }}.aab` | Google Play Bundle | `arm64-v8a` | ${{ env.PRODUCTION_SIGNED == 'true' && '✅ Production Key' || '⚠️ Self-Signed Fallback' }} |
-            | `DemucsStudio-${{ env.VERSION_NAME }}.aab` | Google Play Bundle (Alias) | `arm64-v8a` | ${{ env.PRODUCTION_SIGNED == 'true' && '✅ Production Key' || '⚠️ Self-Signed Fallback' }} |
             | `SHA256SUMS.txt` | Checksum Manifest | Universal | N/A |
 
             ### ONNX Neural Engine Requirements
