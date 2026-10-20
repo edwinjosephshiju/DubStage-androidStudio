@@ -1,0 +1,6 @@
+{
+  "name": "DubStage",
+  "description": "Unified video dubbing and Demucs v4 on-device stem separation DAW studio for line-by-line voice recording, waveform alignment, and MP4 muxing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

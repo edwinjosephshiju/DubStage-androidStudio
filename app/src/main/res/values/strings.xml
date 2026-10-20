@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">DubStage</string>
+    <string name="tab_dubforge">DUBFORGE</string>
+    <string name="tab_dubstage">DUBSTAGE</string>
+    <string name="load_video">Load Video</string>
+    <string name="change_video">Change Video</string>
+    <string name="run_separation">Run Separation</string>
+    <string name="auto_detect_vad">Auto-Detect (VAD)</string>
+    <string name="slice_at_playhead">Slice at Playhead</string>
+    <string name="record_take">Record Take</string>
+    <string name="stop_recording">Stop Recording</string>
+    <string name="export_mp4">Export MP4</string>
+    <string name="demucs_model_title">DEMUCS v4 (HTDemucs) ONNX</string>
+    <string name="mic_input_level">MIC INPUT LEVEL</string>
+    <string name="audition_deck">AUDITION DECK &amp; MONITORING MODES</string>
+    <string name="cue_editor_title">DIALOGUE SCRIPT &amp; CUE EDITOR</string>
+</resources>
