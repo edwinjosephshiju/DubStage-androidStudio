@@ -606,7 +606,7 @@ fun StageTabScreen(
                         Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(22.dp), tint = Color.Black)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "STOP RECORDING TAKE",
+                            text = "STOP RECORDING (AUTO-STOPS AT SCENE END)",
                             style = MaterialTheme.typography.labelLarge,
                             color = Color.Black
                         )

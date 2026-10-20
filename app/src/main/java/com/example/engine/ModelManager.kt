@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -48,6 +49,14 @@ class ModelManager(private val context: Context) {
         .followSslRedirects(true)
         .build()
 
+    private val prefs = context.getSharedPreferences("dubstage_prefs", Context.MODE_PRIVATE)
+
+    private val _persistBackendDefault = MutableStateFlow(prefs.getBoolean("persist_backend", true))
+    val persistBackendDefault: StateFlow<Boolean> = _persistBackendDefault.asStateFlow()
+
+    private val _persistAlgorithmDefault = MutableStateFlow(prefs.getBoolean("persist_algorithm", true))
+    val persistAlgorithmDefault: StateFlow<Boolean> = _persistAlgorithmDefault.asStateFlow()
+
     private val _activePreset = MutableStateFlow(ModelPreset.HTDEMUCS_FT_VOCALS)
     val activePresetFlow: StateFlow<ModelPreset> = _activePreset.asStateFlow()
     val activePreset: ModelPreset get() = _activePreset.value
@@ -64,7 +73,35 @@ class ModelManager(private val context: Context) {
     val status: StateFlow<ModelStatus> = _status.asStateFlow()
 
     init {
+        val savedBackend = prefs.getString("default_backend", null)
+        if (savedBackend != null) {
+            try { _activeBackend.value = ExecutionBackend.valueOf(savedBackend) } catch (_: Exception) {}
+        }
+        val savedAlgorithm = prefs.getString("default_algorithm", null)
+        if (savedAlgorithm != null) {
+            try { _activeKaraokeMode.value = KaraokeMode.valueOf(savedAlgorithm) } catch (_: Exception) {}
+        }
         checkExistingModel()
+    }
+
+    fun setPersistBackendDefault(enabled: Boolean) {
+        _persistBackendDefault.value = enabled
+        prefs.edit().putBoolean("persist_backend", enabled).apply()
+        if (enabled) {
+            prefs.edit().putString("default_backend", _activeBackend.value.name).apply()
+        } else {
+            prefs.edit().remove("default_backend").apply()
+        }
+    }
+
+    fun setPersistAlgorithmDefault(enabled: Boolean) {
+        _persistAlgorithmDefault.value = enabled
+        prefs.edit().putBoolean("persist_algorithm", enabled).apply()
+        if (enabled) {
+            prefs.edit().putString("default_algorithm", _activeKaraokeMode.value.name).apply()
+        } else {
+            prefs.edit().remove("default_algorithm").apply()
+        }
     }
 
     fun setModelPreset(preset: ModelPreset) {
@@ -76,13 +113,20 @@ class ModelManager(private val context: Context) {
     }
 
     fun setKaraokeMode(mode: KaraokeMode) {
-        _activeKaraokeMode.value = if (_activePreset.value.isVocalsOnlyTrained) {
+        val selected = if (_activePreset.value.isVocalsOnlyTrained) {
             KaraokeMode.RESIDUAL_SUBTRACTION
         } else mode
+        _activeKaraokeMode.value = selected
+        if (_persistAlgorithmDefault.value) {
+            prefs.edit().putString("default_algorithm", selected.name).apply()
+        }
     }
 
     fun setExecutionBackend(backend: ExecutionBackend) {
         _activeBackend.value = backend
+        if (_persistBackendDefault.value) {
+            prefs.edit().putString("default_backend", backend.name).apply()
+        }
     }
 
     fun getModelFile(preset: ModelPreset = _activePreset.value): File {
@@ -210,16 +254,19 @@ class ModelManager(private val context: Context) {
         val destFile = File(context.filesDir, preset.fileName)
         val tempFile = File(context.filesDir, "${preset.fileName}.download")
 
-        // List of candidate URLs to prevent 404
-        val candidateUrls = listOf(
-            preset.downloadUrl,
-            preset.downloadUrl.replace("/resolve/", "/raw/"),
-            if (preset == ModelPreset.HTDEMUCS_FT_VOCALS) {
-                "https://huggingface.co/StemSplitio/htdemucs-ft-vocals-onnx/resolve/main/htdemucs_ft_vocals_fp16weights.onnx"
-            } else {
-                "https://huggingface.co/StemSplitio/htdemucs-onnx/resolve/main/htdemucs_fp16weights.onnx"
-            }
-        ).distinct()
+        val candidateUrls = if (preset == ModelPreset.HTDEMUCS_FT_VOCALS) {
+            listOf(
+                "https://huggingface.co/StemSplitio/htdemucs-ft-vocals-onnx/resolve/main/htdemucs_ft_vocals_fp16weights.onnx",
+                preset.downloadUrl,
+                "https://huggingface.co/StemSplitio/htdemucs-ft-vocals-onnx/raw/main/htdemucs_ft_vocals_fp16weights.onnx"
+            )
+        } else {
+            listOf(
+                preset.downloadUrl,
+                "https://huggingface.co/StemSplitio/htdemucs-onnx/resolve/main/htdemucs_fp16weights.onnx",
+                "https://huggingface.co/StemSplitio/htdemucs-onnx/raw/main/htdemucs_fp16weights.onnx"
+            )
+        }.distinct()
 
         var downloadedSuccessfully = false
         var lastErrorMessage = ""
@@ -227,15 +274,38 @@ class ModelManager(private val context: Context) {
         for (urlStr in candidateUrls) {
             try {
                 _status.value = ModelStatus.Downloading(0, 0, 0, 0, "Connecting to Hugging Face...")
-                val request = Request.Builder()
-                    .url(urlStr)
-                    .header("User-Agent", "DubStage-DemucsStudio/1.0 (Android)")
-                    .build()
 
-                val response = okHttpClient.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    lastErrorMessage = "HTTP ${response.code}: ${response.message}"
-                    response.close()
+                var currentUrl = urlStr
+                var redirectHops = 0
+                var activeResponse: Response? = null
+
+                while (redirectHops < 6) {
+                    val request = Request.Builder()
+                        .url(currentUrl)
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+                        .header("Accept-Encoding", "identity")
+                        .build()
+
+                    val resp = okHttpClient.newCall(request).execute()
+                    if (resp.isRedirect || resp.code in 300..399) {
+                        val redirectLocation = resp.header("Location")
+                        resp.close()
+                        if (redirectLocation != null) {
+                            currentUrl = redirectLocation
+                            redirectHops++
+                            continue
+                        }
+                    }
+                    activeResponse = resp
+                    break
+                }
+
+                val response = activeResponse
+                if (response == null || !response.isSuccessful) {
+                    val code = response?.code ?: 0
+                    val msg = response?.message ?: "No response"
+                    lastErrorMessage = "HTTP $code: $msg"
+                    response?.close()
                     continue
                 }
 
@@ -246,7 +316,8 @@ class ModelManager(private val context: Context) {
                     continue
                 }
 
-                val totalBytes = body.contentLength()
+                val rawLength = body.contentLength()
+                val totalBytes = if (rawLength > 0) rawLength else 165612636L
                 val inputStream = body.byteStream()
 
                 if (tempFile.exists()) tempFile.delete()

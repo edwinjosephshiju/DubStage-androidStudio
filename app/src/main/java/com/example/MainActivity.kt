@@ -1,10 +1,12 @@
 package com.example
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -32,10 +34,13 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,6 +48,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
+import com.example.ui.components.StudioSettingsModal
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -94,9 +100,34 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainStudioScreen(viewModel: DubStageViewModel) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("dubstage_prefs", Context.MODE_PRIVATE) }
     var selectedTab by remember { mutableStateOf(StudioTab.DUBFORGE) }
+    var isSettingsOpen by remember {
+        val hasOpenedBefore = prefs.getBoolean("has_completed_first_launch_setup", false)
+        if (!hasOpenedBefore) {
+            prefs.edit().putBoolean("has_completed_first_launch_setup", true).apply()
+            mutableStateOf(true)
+        } else {
+            mutableStateOf(false)
+        }
+    }
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     val activeProject by viewModel.activeProject.collectAsStateWithLifecycle()
+
+    val modelPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { viewModel.sideloadModel(it) }
+    }
+
+    if (isSettingsOpen) {
+        StudioSettingsModal(
+            viewModel = viewModel,
+            onDismissRequest = { isSettingsOpen = false },
+            onSideloadClick = { modelPickerLauncher.launch(arrayOf("*/*")) }
+        )
+    }
 
     Scaffold(
         modifier = Modifier
@@ -107,7 +138,8 @@ fun MainStudioScreen(viewModel: DubStageViewModel) {
             StudioTopBar(
                 selectedTab = selectedTab,
                 onTabSelected = { selectedTab = it },
-                projectTitle = activeProject?.title
+                projectTitle = activeProject?.title,
+                onOpenSettings = { isSettingsOpen = true }
             )
         },
         bottomBar = {
@@ -172,7 +204,10 @@ fun MainStudioScreen(viewModel: DubStageViewModel) {
                 label = "tab_transition"
             ) { tab ->
                 when (tab) {
-                    StudioTab.DUBFORGE -> ForgeTabScreen(viewModel = viewModel)
+                    StudioTab.DUBFORGE -> ForgeTabScreen(
+                        viewModel = viewModel,
+                        onOpenSettings = { isSettingsOpen = true }
+                    )
                     StudioTab.DUBSTAGE -> StageTabScreen(viewModel = viewModel)
                 }
             }
@@ -184,7 +219,8 @@ fun MainStudioScreen(viewModel: DubStageViewModel) {
 fun StudioTopBar(
     selectedTab: StudioTab,
     onTabSelected: (StudioTab) -> Unit,
-    projectTitle: String?
+    projectTitle: String?,
+    onOpenSettings: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -192,14 +228,14 @@ fun StudioTopBar(
             .windowInsetsPadding(WindowInsets.statusBars)
             .background(StudioContainer)
             .border(1.dp, StudioBorder)
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // App Branding & Status LED
+            // App Branding & Status LED with DEMUCS v4 beneath DUBSTAGE, and circular settings gear in the empty space
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -207,25 +243,43 @@ fun StudioTopBar(
                         .background(StudioAccent, CircleShape)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "DUBSTAGE",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 1.5.sp
-                    ),
-                    color = Color.White
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .background(StudioElevated, RoundedCornerShape(4.dp))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
+                Column {
+                    Text(
+                        text = "DUBSTAGE",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 1.5.sp
+                        ),
+                        color = Color.White
+                    )
                     Text(
                         text = "DEMUCS v4",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        ),
                         color = StemVocal
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                // Settings gear circular button (matching the proportions to the tab selection buttons/switches)
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(StudioCanvas)
+                        .border(1.dp, StudioBorder, CircleShape)
+                        .clickable { onOpenSettings() }
+                        .testTag("settings_gear_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Studio Settings",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }

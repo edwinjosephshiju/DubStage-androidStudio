@@ -37,6 +37,7 @@ class AudioRecordingEngine(private val context: Context) {
     @SuppressLint("MissingPermission")
     suspend fun recordTake(
         outputFile: File,
+        maxDurationMs: Long = Long.MAX_VALUE,
         onRmsDecibels: (db: Float) -> Unit,
         onPeakSample: (normalizedAmp: Float) -> Unit
     ): TakeRecordingResult = withContext(Dispatchers.IO) {
@@ -97,6 +98,23 @@ class AudioRecordingEngine(private val context: Context) {
                     val rms = sqrt(sumSquares / shortsRead).toFloat()
                     val db = if (rms > 0.00001f) (20f * log10(rms)).coerceIn(-60f, 0f) else -60f
                     onRmsDecibels(db)
+
+                    val elapsedMs = (totalFramesRecorded * 1000L) / SAMPLE_RATE
+                    val wallElapsedMs = System.currentTimeMillis() - startTime
+                    if (maxDurationMs != Long.MAX_VALUE && (elapsedMs >= maxDurationMs || wallElapsedMs >= maxDurationMs)) {
+                        isRecording = false
+                        break
+                    }
+                } else {
+                    val wallElapsedMs = System.currentTimeMillis() - startTime
+                    if (maxDurationMs != Long.MAX_VALUE && wallElapsedMs >= maxDurationMs) {
+                        isRecording = false
+                        break
+                    }
+                    if (shortsRead < 0) {
+                        // Avoid spin on mic buffer read error
+                        Thread.sleep(10)
+                    }
                 }
             }
         } finally {

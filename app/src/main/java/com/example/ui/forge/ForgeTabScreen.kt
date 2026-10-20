@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.ui.input.pointer.pointerInput
@@ -77,7 +78,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.engine.DemucsSeparationProgress
 import com.example.engine.ModelStatus
 import com.example.ui.DubStageViewModel
-import com.example.ui.components.ModelDownloaderCard
 import com.example.ui.components.VideoMonitor
 import com.example.ui.components.WaveformCanvas
 import com.example.ui.components.formatTimecode
@@ -97,7 +97,8 @@ import com.example.ui.theme.WarningAmber
 @Composable
 fun ForgeTabScreen(
     viewModel: DubStageViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenSettings: (() -> Unit)? = null
 ) {
     val activeProject by viewModel.activeProject.collectAsStateWithLifecycle()
     val clips by viewModel.clips.collectAsStateWithLifecycle()
@@ -112,6 +113,8 @@ fun ForgeTabScreen(
     val isExtractingAudio by viewModel.isExtractingAudio.collectAsStateWithLifecycle()
     val extractionPercent by viewModel.extractionPercent.collectAsStateWithLifecycle()
     val vadSensitivity by viewModel.vadSensitivity.collectAsStateWithLifecycle()
+    val persistBackendDefault by viewModel.modelManager.persistBackendDefault.collectAsStateWithLifecycle()
+    val persistAlgorithmDefault by viewModel.modelManager.persistAlgorithmDefault.collectAsStateWithLifecycle()
 
     val originalPeaks by viewModel.originalWaveformPeaks.collectAsStateWithLifecycle()
     val vocalPeaks by viewModel.vocalsWaveformPeaks.collectAsStateWithLifecycle()
@@ -231,23 +234,7 @@ fun ForgeTabScreen(
             }
         }
 
-        // 4. Demucs v4 ONNX Model Card
-        item {
-            ModelDownloaderCard(
-                status = modelStatus,
-                activePreset = activePreset,
-                activeBackend = activeBackend,
-                activeKaraokeMode = activeKaraokeMode,
-                onSelectPreset = { viewModel.setModelPreset(it) },
-                onSelectBackend = { viewModel.setExecutionBackend(it) },
-                onSelectKaraokeMode = { viewModel.setKaraokeMode(it) },
-                onDownloadClick = { viewModel.downloadModel() },
-                onSideloadClick = { modelPickerLauncher.launch(arrayOf("*/*")) },
-                onRetryClick = { viewModel.downloadModel() }
-            )
-        }
-
-        // 5. Demucs Separation Control & Progress
+        // 4. Demucs Separation Control & Progress
         if (activeProject != null) {
             item {
                 Card(
@@ -275,15 +262,27 @@ fun ForgeTabScreen(
                             }
 
                             if (vocalPeaks.isEmpty()) {
-                                Button(
-                                    onClick = { viewModel.startDemucsSeparation() },
-                                    enabled = !isSeparating && modelStatus is ModelStatus.Ready,
-                                    colors = ButtonDefaults.buttonColors(containerColor = StemBacking),
-                                    modifier = Modifier.testTag("run_separation_button")
-                                ) {
-                                    Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(if (isSeparating) "Separating..." else "Run Separation")
+                                if (modelStatus !is ModelStatus.Ready) {
+                                    Button(
+                                        onClick = { onOpenSettings?.invoke() },
+                                        colors = ButtonDefaults.buttonColors(containerColor = StudioElevated),
+                                        modifier = Modifier.testTag("get_model_button")
+                                    ) {
+                                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAccent)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Get Model", color = Color.White)
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = { viewModel.startDemucsSeparation() },
+                                        enabled = !isSeparating,
+                                        colors = ButtonDefaults.buttonColors(containerColor = StemBacking),
+                                        modifier = Modifier.testTag("run_separation_button")
+                                    ) {
+                                        Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(if (isSeparating) "Separating..." else "Run Separation")
+                                    }
                                 }
                             } else {
                                 Row(verticalAlignment = Alignment.CenterVertically) {

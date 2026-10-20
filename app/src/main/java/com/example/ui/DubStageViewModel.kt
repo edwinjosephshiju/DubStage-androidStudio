@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
@@ -169,15 +170,33 @@ class DubStageViewModel(application: Application) : AndroidViewModel(application
         modelManager.setExecutionBackend(backend)
     }
 
+    fun setPersistBackendDefault(enabled: Boolean) {
+        modelManager.setPersistBackendDefault(enabled)
+    }
+
+    fun setPersistAlgorithmDefault(enabled: Boolean) {
+        modelManager.setPersistAlgorithmDefault(enabled)
+    }
+
     fun downloadModel(preset: ModelPreset = modelManager.activePreset) {
         viewModelScope.launch {
-            modelManager.downloadModel(preset)
+            try {
+                modelManager.downloadModel(preset)
+            } catch (t: Throwable) {
+                Log.e("DubStageViewModel", "Error downloading model", t)
+                _errorMessage.value = "Model download error: ${t.localizedMessage ?: t.message ?: "Unknown error"}"
+            }
         }
     }
 
     fun sideloadModel(uri: Uri) {
         viewModelScope.launch {
-            modelManager.sideloadModel(uri)
+            try {
+                modelManager.sideloadModel(uri)
+            } catch (t: Throwable) {
+                Log.e("DubStageViewModel", "Error sideloading model", t)
+                _errorMessage.value = "Model sideload error: ${t.localizedMessage ?: t.message ?: "Unknown error"}"
+            }
         }
     }
 
@@ -528,6 +547,9 @@ class DubStageViewModel(application: Application) : AndroidViewModel(application
         val clip = _activeClip.value ?: return
         val proj = _activeProject.value ?: return
 
+        // Length of original vocal for that scene
+        val sceneVocalDurationMs = max(300L, clip.endMs - clip.startMs)
+
         viewModelScope.launch {
             // Seek 1.5s prior to clip for context
             val cueStart = max(0L, clip.startMs - 1500L)
@@ -553,19 +575,30 @@ class DubStageViewModel(application: Application) : AndroidViewModel(application
                     originalVocalsWavFile = null,
                     takes = emptyList(),
                     startPositionMs = clip.startMs,
-                    endPositionMs = clip.endMs + 500L,
+                    endPositionMs = clip.endMs,
                     auditionMode = StudioAuditionMode.BACKING_ONLY,
                     onPlayheadUpdate = { _playheadMs.value = it },
                     onPlaybackFinished = {}
                 )
             }
 
+            // Dedicated timer job to guarantee recording auto-stops exactly when the scene's vocal duration completes
+            val autoStopJob = launch {
+                delay(sceneVocalDurationMs)
+                recordingEngine.stopRecording()
+                mixerEngine.stop()
+            }
+
             try {
+                // Auto-stops after the length of the original vocal for that scene was completed
                 val recordResult = recordingEngine.recordTake(
                     outputFile = takePcmFile,
+                    maxDurationMs = sceneVocalDurationMs,
                     onRmsDecibels = { _liveMicDecibels.value = it },
                     onPeakSample = { _liveMicPeak.value = it }
                 )
+                autoStopJob.cancel()
+                mixerEngine.stop()
 
                 _activeTakePeaks.value = recordResult.peaks
                 val nextTakeNumber = (_takes.value.maxOfOrNull { it.takeNumber } ?: 0) + 1
@@ -589,6 +622,9 @@ class DubStageViewModel(application: Application) : AndroidViewModel(application
             } catch (e: Exception) {
                 _errorMessage.value = "Recording error: ${e.message}"
             } finally {
+                autoStopJob.cancel()
+                recordingEngine.stopRecording()
+                mixerEngine.stop()
                 _isRecording.value = false
                 _liveMicDecibels.value = -60f
                 _liveMicPeak.value = 0f

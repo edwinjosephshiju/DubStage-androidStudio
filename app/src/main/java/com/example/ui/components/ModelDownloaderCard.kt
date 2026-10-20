@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -55,6 +57,10 @@ fun ModelDownloaderCard(
     activePreset: ModelPreset,
     activeBackend: ExecutionBackend,
     activeKaraokeMode: KaraokeMode,
+    persistBackendDefault: Boolean = true,
+    persistAlgorithmDefault: Boolean = true,
+    onPersistBackendDefaultChange: ((Boolean) -> Unit)? = null,
+    onPersistAlgorithmDefaultChange: ((Boolean) -> Unit)? = null,
     onSelectPreset: (ModelPreset) -> Unit,
     onSelectBackend: (ExecutionBackend) -> Unit,
     onSelectKaraokeMode: (KaraokeMode) -> Unit,
@@ -203,6 +209,33 @@ fun ModelDownloaderCard(
             }
         }
 
+        if (onPersistBackendDefaultChange != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPersistBackendDefaultChange(!persistBackendDefault) }
+                    .padding(vertical = 2.dp)
+            ) {
+                Checkbox(
+                    checked = persistBackendDefault,
+                    onCheckedChange = { onPersistBackendDefaultChange(it) },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = StemUserTake,
+                        uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Set persistent default backend",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(10.dp))
 
         // Karaoke / Backing Mode Selector
@@ -242,6 +275,33 @@ fun ModelDownloaderCard(
             }
         }
 
+        if (onPersistAlgorithmDefaultChange != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPersistAlgorithmDefaultChange(!persistAlgorithmDefault) }
+                    .padding(vertical = 2.dp)
+            ) {
+                Checkbox(
+                    checked = persistAlgorithmDefault,
+                    onCheckedChange = { onPersistAlgorithmDefaultChange(it) },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = StemBacking,
+                        uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Set persistent default extraction algorithm",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(10.dp))
 
         // Download / Sideload / Status Area
@@ -260,16 +320,17 @@ fun ModelDownloaderCard(
                 val downloadedMb = status.bytesRead / (1024L * 1024L)
                 val totalMb = if (status.totalBytes > 0) status.totalBytes / (1024L * 1024L) else 166L
                 val speedMb = (status.speedBytesPerSec / 1024.0 / 1024.0)
+                val speedStr = "%.1f".format(java.util.Locale.US, speedMb)
 
                 Column {
                     Text(
-                        text = "${status.statusMessage} ($downloadedMb MB / $totalMb MB • %.1f MB/s)".format(speedMb),
+                        text = "${status.statusMessage} ($downloadedMb MB / $totalMb MB • $speedStr MB/s)",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     LinearProgressIndicator(
-                        progress = { status.percent / 100f },
+                        progress = { (status.percent / 100f).coerceIn(0f, 1f) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(6.dp)
