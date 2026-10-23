@@ -1,7 +1,15 @@
 package com.example.ui.forge
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -29,7 +37,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
@@ -39,10 +50,13 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.VideoFile
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -59,6 +73,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -69,6 +84,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -94,13 +110,21 @@ import com.example.ui.theme.StudioContainer
 import com.example.ui.theme.StudioElevated
 import com.example.ui.theme.WarningAmber
 
+data class SaveAlertState(
+    val isSuccess: Boolean,
+    val title: String,
+    val message: String
+)
+
 @Composable
 fun ForgeTabScreen(
     viewModel: DubStageViewModel,
     modifier: Modifier = Modifier,
     onOpenSettings: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
     val activeProject by viewModel.activeProject.collectAsStateWithLifecycle()
+    val allProjects by viewModel.allProjects.collectAsStateWithLifecycle()
     val clips by viewModel.clips.collectAsStateWithLifecycle()
     val activeClip by viewModel.activeClip.collectAsStateWithLifecycle()
     val isPlaying by viewModel.isPlaying.collectAsStateWithLifecycle()
@@ -115,23 +139,58 @@ fun ForgeTabScreen(
     val vadSensitivity by viewModel.vadSensitivity.collectAsStateWithLifecycle()
     val persistBackendDefault by viewModel.modelManager.persistBackendDefault.collectAsStateWithLifecycle()
     val persistAlgorithmDefault by viewModel.modelManager.persistAlgorithmDefault.collectAsStateWithLifecycle()
+    val isSavingDubPack by viewModel.isSavingDubPack.collectAsStateWithLifecycle()
+    val lastSavedSignature by viewModel.lastSavedSignature.collectAsStateWithLifecycle()
 
     val originalPeaks by viewModel.originalWaveformPeaks.collectAsStateWithLifecycle()
     val vocalPeaks by viewModel.vocalsWaveformPeaks.collectAsStateWithLifecycle()
 
-    // SAF Video Picker
+    var saveAlertData by remember { mutableStateOf<SaveAlertState?>(null) }
+    var showVideoSourcePicker by remember { mutableStateOf(false) }
+
+    val doSaveDubPack: (String) -> Unit = { titleToSave ->
+        viewModel.saveDubPack(titleToSave) { isSuccess, message ->
+            saveAlertData = SaveAlertState(
+                isSuccess = isSuccess,
+                title = if (isSuccess) "DubPack Saved" else "Save Failed",
+                message = message
+            )
+        }
+    }
+
+
+    val handlePickedVideoUri: (Uri) -> Unit = { uri ->
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: Exception) {}
+        val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "Scene_01"
+        viewModel.ingestVideo(
+            videoUri = uri,
+            title = fileName.substringBeforeLast('.'),
+            durationMs = 0L,
+            width = 1920,
+            height = 1080
+        )
+    }
+
+    // Modern Android Photo & Video Picker (Zero-Permission Standard)
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            handlePickedVideoUri(uri)
+        }
+    }
+
+    // Storage Access Framework Document Picker (Downloads, SD Card, Drive)
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "Scene_01"
-            viewModel.ingestVideo(
-                videoUri = uri,
-                title = fileName.substringBeforeLast('.'),
-                durationMs = 0L,
-                width = 1920,
-                height = 1080
-            )
+            handlePickedVideoUri(uri)
         }
     }
 
@@ -140,6 +199,12 @@ fun ForgeTabScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
             viewModel.sideloadModel(uri)
         }
     }
@@ -173,7 +238,7 @@ fun ForgeTabScreen(
                 }
 
                 Button(
-                    onClick = { videoPickerLauncher.launch(arrayOf("video/*")) },
+                    onClick = { showVideoSourcePicker = true },
                     colors = ButtonDefaults.buttonColors(containerColor = StudioElevated),
                     border = androidx.compose.foundation.BorderStroke(1.dp, StudioBorder),
                     modifier = Modifier.testTag("ingest_video_button")
@@ -867,7 +932,268 @@ fun ForgeTabScreen(
                 }
             }
         }
+
+        // 6. Save DubPack Section
+        if (activeProject != null) {
+            item {
+                Spacer(modifier = Modifier.height(20.dp))
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 24.dp),
+                    colors = CardDefaults.cardColors(containerColor = StudioElevated),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, StudioAccent.copy(alpha = 0.5f))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "FINALIZE DUBPACK",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = StudioAccent
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        var projectTitle by remember(activeProject?.id, activeProject?.title) { 
+                            mutableStateOf(activeProject?.title ?: "") 
+                        }
+                        
+                        val cleanTitle = projectTitle.trim()
+                        val currentSig = viewModel.computeCurrentSignature(cleanTitle)
+                        val hasChanges = currentSig != lastSavedSignature
+
+                        // Check if a same named DubPack was found in the gallery
+                        val matchingGalleryProject = allProjects.firstOrNull { 
+                            it.title.equals(cleanTitle, ignoreCase = true) 
+                        }
+                        val isSameNamedProjectInGallery = matchingGalleryProject != null
+
+                        // Save button is greyed out if no change was determined to the same named DubPack found in the gallery
+                        val isGreyedOut = cleanTitle.isEmpty() || isSavingDubPack || (isSameNamedProjectInGallery && !hasChanges)
+                        val isSaveEnabled = !isGreyedOut
+
+                        OutlinedTextField(
+                            value = projectTitle,
+                            onValueChange = { projectTitle = it },
+                            label = { Text("DubPack Name") },
+                            modifier = Modifier.fillMaxWidth().testTag("dubpack_name_input"),
+                            textStyle = MaterialTheme.typography.bodyLarge,
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = StudioAccent,
+                                unfocusedBorderColor = StudioBorder
+                            )
+                        )
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        Button(
+                            onClick = {
+                                doSaveDubPack(cleanTitle)
+                            },
+                            enabled = isSaveEnabled,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("save_dubpack_button"),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSaveEnabled) StudioAccent else StudioElevated,
+                                contentColor = if (isSaveEnabled) Color.White else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                disabledContainerColor = StudioElevated,
+                                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isSaveEnabled) StudioAccent else StudioBorder.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            if (isSavingDubPack) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Saving DubPack with Video...", fontWeight = FontWeight.Bold)
+                            } else {
+                                Icon(
+                                    imageVector = if (!isSaveEnabled && isSameNamedProjectInGallery) Icons.Default.CheckCircle else Icons.Default.Save,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = if (isSaveEnabled) Color.White else if (isSameNamedProjectInGallery) StemVocal else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = when {
+                                        cleanTitle.isEmpty() -> "Enter DubPack Name"
+                                        isSameNamedProjectInGallery && !hasChanges -> "DubPack Up to Date (Saved)"
+                                        isSameNamedProjectInGallery && hasChanges -> "Save Changes to DubPack"
+                                        else -> "Save DubPack to Gallery"
+                                    },
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
+
+    // Save Success / Failure Alert Dialog
+    if (saveAlertData != null) {
+        val alert = saveAlertData!!
+        AlertDialog(
+            onDismissRequest = { saveAlertData = null },
+            icon = {
+                Icon(
+                    imageVector = if (alert.isSuccess) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = if (alert.isSuccess) StemVocal else MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = alert.title,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = Color.White
+                )
+            },
+            text = {
+                Text(
+                    text = alert.message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { saveAlertData = null },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (alert.isSuccess) StudioAccent else MaterialTheme.colorScheme.error
+                    ),
+                    modifier = Modifier.testTag("dismiss_save_alert_button")
+                ) {
+                    Text("OK", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            },
+            containerColor = StudioElevated,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // Video Source Storage Picker Dialog
+    if (showVideoSourcePicker) {
+        AlertDialog(
+            onDismissRequest = { showVideoSourcePicker = false },
+            title = {
+                Text(
+                    text = "SELECT VIDEO SOURCE",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = Color.White
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Choose how you want to select your scene video for voice dubbing and stem separation:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Option 1: Gallery / Photo Picker
+                    Surface(
+                        onClick = {
+                            showVideoSourcePicker = false
+                            photoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                            )
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        color = StudioCanvas,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, StudioAccent.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth().testTag("pick_from_gallery_option")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(StudioAccent.copy(alpha = 0.2f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Collections, contentDescription = null, tint = StudioAccent, modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Device Media Gallery",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Camera, Movies, Screen Recordings",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    // Option 2: Files / Documents
+                    Surface(
+                        onClick = {
+                            showVideoSourcePicker = false
+                            videoPickerLauncher.launch(arrayOf("video/*"))
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        color = StudioCanvas,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, StudioBorder),
+                        modifier = Modifier.fillMaxWidth().testTag("pick_from_files_option")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(StudioElevated, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Browse Files & Storage",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Downloads, SD Card, Cloud Storage",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showVideoSourcePicker = false }) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            containerColor = StudioElevated,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
 }
 
 @Composable

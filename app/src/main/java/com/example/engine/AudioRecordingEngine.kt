@@ -47,13 +47,17 @@ class AudioRecordingEngine(private val context: Context) {
         }
 
         val bufferSize = max(minBufSize, 8192)
-        val recorder = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            SAMPLE_RATE,
-            CHANNEL_CONFIG,
-            AUDIO_FORMAT,
-            bufferSize
-        )
+        val recorder = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                SAMPLE_RATE,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
+                bufferSize
+            )
+        } catch (e: SecurityException) {
+            throw SecurityException("Microphone permission was denied or revoked: ${e.message}", e)
+        }
 
         if (recorder.state != AudioRecord.STATE_INITIALIZED) {
             recorder.release()

@@ -238,6 +238,56 @@ class AudioExtractionEngine(private val context: Context) {
         return outBytes
     }
 
+    fun loadPeaksFromPcm(file: File, targetSize: Int = 2000): FloatArray {
+        if (!file.exists()) return FloatArray(0)
+        val rawAmps = mutableListOf<Float>()
+        try {
+            java.io.FileInputStream(file).use { fis ->
+                val buffer = ByteArray(65536)
+                var bytesRead: Int
+                while (fis.read(buffer).also { bytesRead = it } != -1) {
+                    val shortBuffer = ByteBuffer.wrap(buffer, 0, bytesRead).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                    val step = max(1, shortBuffer.remaining() / 100)
+                    var i = 0
+                    while (i < shortBuffer.remaining()) {
+                        val sample = shortBuffer.get(i).toInt()
+                        rawAmps.add(abs(sample) / 32768f)
+                        i += step
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            return FloatArray(0)
+        }
+        return resamplePeakEnvelope(rawAmps, targetSize)
+    }
+
+    fun loadPeaksFromWav(file: File, targetSize: Int = 2000): FloatArray {
+        if (!file.exists()) return FloatArray(0)
+        val rawAmps = mutableListOf<Float>()
+        try {
+            java.io.FileInputStream(file).use { fis ->
+                // Skip 44 bytes header
+                fis.skip(44)
+                val buffer = ByteArray(65536)
+                var bytesRead: Int
+                while (fis.read(buffer).also { bytesRead = it } != -1) {
+                    val shortBuffer = ByteBuffer.wrap(buffer, 0, bytesRead).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                    val step = max(1, shortBuffer.remaining() / 100)
+                    var i = 0
+                    while (i < shortBuffer.remaining()) {
+                        val sample = shortBuffer.get(i).toInt()
+                        rawAmps.add(abs(sample) / 32768f)
+                        i += step
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            return FloatArray(0)
+        }
+        return resamplePeakEnvelope(rawAmps, targetSize)
+    }
+
     private fun resamplePeakEnvelope(rawAmps: List<Float>, targetSize: Int): FloatArray {
         val result = FloatArray(targetSize)
         if (rawAmps.isEmpty()) return result

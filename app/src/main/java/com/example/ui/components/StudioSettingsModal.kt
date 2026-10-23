@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -255,11 +256,12 @@ fun StudioSettingsModal(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_github),
-                                        contentDescription = "GitHub",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(24.dp)
+                                    Image(
+                                        painter = painterResource(id = R.drawable.ic_dubstage_logo),
+                                        contentDescription = "DubStage Logo",
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(8.dp))
                                     )
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Column {

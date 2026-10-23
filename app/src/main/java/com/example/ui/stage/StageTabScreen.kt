@@ -1,9 +1,15 @@
 package com.example.ui.stage
 
+import android.Manifest
+import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,15 +32,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
@@ -134,12 +143,67 @@ fun StageTabScreen(
     var stageStartTimeText by remember(activeClip?.id, activeClip?.startMs) { mutableStateOf(activeClip?.let { formatTimecode(it.startMs) } ?: "") }
     var stageEndTimeText by remember(activeClip?.id, activeClip?.endMs) { mutableStateOf(activeClip?.let { formatTimecode(it.endMs) } ?: "") }
 
-    // Microphone Permission Launcher
+    var hasMicPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var showMicRationaleDialog by remember { mutableStateOf(false) }
+    var showMicDeniedDialog by remember { mutableStateOf(false) }
+
+    var pendingExportFileToSave by remember { mutableStateOf<File?>(null) }
+    var gallerySaveNotice by remember { mutableStateOf<String?>(null) }
+
+    // SAF Custom Folder Video Export Launcher
+    val createDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("video/mp4")
+    ) { destinationUri: Uri? ->
+        val fileToSave = pendingExportFileToSave
+        if (destinationUri != null && fileToSave != null) {
+            viewModel.copyExportedVideoToUri(fileToSave.absolutePath, destinationUri) { success, msg ->
+                gallerySaveNotice = msg
+            }
+        }
+    }
+
+    // Microphone Permission Launcher with graceful rationale/denial feedback
     val micPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
+        hasMicPermission = granted
         if (granted) {
+            showMicRationaleDialog = false
+            showMicDeniedDialog = false
             viewModel.startPreRollAndRecord()
+        } else {
+            showMicRationaleDialog = false
+            showMicDeniedDialog = true
+        }
+    }
+
+    val onTriggerRecord: () -> Unit = {
+        val isGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        hasMicPermission = isGranted
+
+        if (isGranted) {
+            viewModel.startPreRollAndRecord()
+        } else {
+            val activity = context as? Activity
+            val shouldShowRationale = activity?.let {
+                ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.RECORD_AUDIO)
+            } ?: false
+
+            if (shouldShowRationale) {
+                showMicRationaleDialog = true
+            } else {
+                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
         }
     }
 
@@ -219,7 +283,7 @@ fun StageTabScreen(
                                 enabled = clips.isNotEmpty(),
                                 modifier = Modifier.size(32.dp).testTag("prev_line_button")
                             ) {
-                                Icon(Icons.Default.ArrowBack, contentDescription = "Previous Cue", tint = MaterialTheme.colorScheme.onSurface)
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Cue", tint = MaterialTheme.colorScheme.onSurface)
                             }
 
                             Text(
@@ -234,7 +298,7 @@ fun StageTabScreen(
                                 enabled = clips.isNotEmpty(),
                                 modifier = Modifier.size(32.dp).testTag("next_line_button")
                             ) {
-                                Icon(Icons.Default.ArrowForward, contentDescription = "Next Cue", tint = MaterialTheme.colorScheme.onSurface)
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Cue", tint = MaterialTheme.colorScheme.onSurface)
                             }
                         }
 
@@ -573,14 +637,75 @@ fun StageTabScreen(
                     .border(1.dp, StudioBorder, RoundedCornerShape(10.dp))
                     .padding(14.dp)
             ) {
-                VuMeter(decibels = liveMicDb)
+                if (!hasMicPermission) {
+                    Surface(
+                        onClick = onTriggerRecord,
+                        shape = RoundedCornerShape(8.dp),
+                        color = WarningAmber.copy(alpha = 0.12f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, WarningAmber.copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp)
+                            .testTag("grant_mic_permission_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MicOff,
+                                contentDescription = null,
+                                tint = WarningAmber,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Microphone access needed for live metering & voice takes.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = WarningAmber,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "GRANT",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = Color.White
+                            )
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "LIVE MICROPHONE VU METER",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(modifier = Modifier.size(6.dp).background(StemVocal, CircleShape))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "MIC READY (44.1kHz)",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                                color = StemVocal
+                            )
+                        }
+                    }
+                }
+
+                VuMeter(decibels = if (hasMicPermission) liveMicDb else -60f)
 
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // Big Recording Action Button
                 if (!isRecording) {
                     Button(
-                        onClick = { micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO) },
+                        onClick = onTriggerRecord,
                         colors = ButtonDefaults.buttonColors(containerColor = StatusRecording),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -897,24 +1022,205 @@ fun StageTabScreen(
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, "video/mp4")
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        context.startActivity(Intent.createChooser(intent, "Play Exported Video"))
-                    }
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Play Video")
+                    if (gallerySaveNotice != null) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = StemVocal.copy(alpha = 0.15f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, StemVocal),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = StemVocal, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = gallerySaveNotice!!,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = StemVocal
+                                )
+                            }
+                        }
+                    }
+
+                    // 1. Save to Device Movies / Gallery
+                    Button(
+                        onClick = {
+                            viewModel.saveExportedVideoToGallery(file.absolutePath) { isSuccess, msg ->
+                                gallerySaveNotice = msg
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = StemUserTake),
+                        modifier = Modifier.fillMaxWidth().testTag("save_to_gallery_button")
+                    ) {
+                        Icon(Icons.Default.Collections, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.Black)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Save to Device Gallery (Movies)", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+
+                    // 2. Save As... (choose custom storage folder)
+                    OutlinedButton(
+                        onClick = {
+                            pendingExportFileToSave = file
+                            createDocumentLauncher.launch("DubStage_${file.name}")
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, StudioBorder),
+                        modifier = Modifier.fillMaxWidth().testTag("save_as_button")
+                    ) {
+                        Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAccent)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Save to Storage Folder (SAF)")
+                    }
+
+                    // 3. Play Video & Share row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(uri, "video/mp4")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Play Exported Video"))
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = StudioAccent),
+                            modifier = Modifier.weight(1f).testTag("play_exported_video_button")
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Play")
+                        }
+
+                        Button(
+                            onClick = {
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "video/mp4"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, "Share Dubbed Video"))
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = StudioElevated),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, StudioBorder),
+                            modifier = Modifier.weight(1f).testTag("share_exported_video_button")
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Share")
+                        }
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.dismissExportDialog() }) {
-                    Text("Close")
+                TextButton(onClick = {
+                    gallerySaveNotice = null
+                    viewModel.dismissExportDialog()
+                }) {
+                    Text("Close", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }
+            },
+            containerColor = StudioElevated,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // Microphone Permission Rationale Dialog
+    if (showMicRationaleDialog) {
+        AlertDialog(
+            onDismissRequest = { showMicRationaleDialog = false },
+            icon = {
+                Icon(Icons.Default.Mic, contentDescription = null, tint = StudioAccent, modifier = Modifier.size(36.dp))
+            },
+            title = {
+                Text(
+                    text = "Microphone Access Required",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = Color.White
+                )
+            },
+            text = {
+                Text(
+                    text = "DubStage needs microphone access to record voice takes synchronized to scene timing and teleprompter dialogue cues.\n\nAll recordings are processed 100% locally and stored securely on your device.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showMicRationaleDialog = false
+                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = StudioAccent)
+                ) {
+                    Text("Grant Permission", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMicRationaleDialog = false }) {
+                    Text("Not Now", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            containerColor = StudioElevated,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // Microphone Permission Denied Dialog
+    if (showMicDeniedDialog) {
+        AlertDialog(
+            onDismissRequest = { showMicDeniedDialog = false },
+            icon = {
+                Icon(Icons.Default.MicOff, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(36.dp))
+            },
+            title = {
+                Text(
+                    text = "Microphone Access Denied",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = Color.White
+                )
+            },
+            text = {
+                Text(
+                    text = "Without microphone access, DubStage cannot record voice takes. You can enable Microphone access anytime in Android App Settings.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showMicDeniedDialog = false
+                        val intent = Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", context.packageName, null)
+                        ).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = StudioAccent)
+                ) {
+                    Text("Open Settings", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMicDeniedDialog = false }) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            containerColor = StudioElevated,
+            shape = RoundedCornerShape(16.dp)
         )
     }
 }

@@ -1,0 +1,189 @@
+name: Android Build & Test CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - dev
+      - 'feature/**'
+      - 'fix/**'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ci-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & Test Android App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Ensure Executable Gradle Wrapper
+        run: |
+          if [ ! -f "gradlew" ]; then
+            echo "gradlew not found. Generating Gradle wrapper..."
+            gradle wrapper
+          fi
+          chmod +x gradlew
+
+      - name: Ensure Secrets Environment File
+        run: |
+          if [ ! -f ".env" ]; then
+            echo "# Auto-generated fallback .env for CI build" > .env
+          fi
+
+      - name: Configure Keystore for Signing
+        id: keystore-setup
+        run: |
+          KEYSTORE_DEST="my-upload-key.jks"
+
+          if [ -n "${{ secrets.SIGNING_KEY_STORE_BASE64 }}" ]; then
+            echo "Using repository SIGNING_KEY_STORE_BASE64 secret..."
+            echo "${{ secrets.SIGNING_KEY_STORE_BASE64 }}" | base64 --decode > "$KEYSTORE_DEST"
+            cp "$KEYSTORE_DEST" app/release-keystore.jks 2>/dev/null || true
+
+            KEYSTORE_PASS="${{ secrets.KEYSTORE_PASSWORD }}"
+            KEY_ALIAS_VAL="${{ secrets.KEY_ALIAS }}"
+            [ -z "$KEY_ALIAS_VAL" ] && KEY_ALIAS_VAL="upload"
+            KEY_PASS_VAL="${{ secrets.KEY_PASSWORD }}"
+            [ -z "$KEY_PASS_VAL" ] && KEY_PASS_VAL="$KEYSTORE_PASS"
+
+            echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/${KEYSTORE_DEST}" >> $GITHUB_ENV
+            echo "STORE_PASSWORD=${KEYSTORE_PASS}" >> $GITHUB_ENV
+            echo "KEY_ALIAS=${KEY_ALIAS_VAL}" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=${KEY_PASS_VAL}" >> $GITHUB_ENV
+            echo "IS_PRODUCTION_SIGNED=true" >> $GITHUB_ENV
+            echo "✅ Production signing keystore configured."
+          else
+            echo "Creating self-signed fallback keystore for CI release build..."
+            keytool -genkeypair \
+              -v \
+              -keystore "$KEYSTORE_DEST" \
+              -alias upload \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass android \
+              -keypass android \
+              -dname "CN=DubStageCI, OU=AndroidDev, O=OpenSource, L=Default, ST=Default, C=US"
+
+            cp "$KEYSTORE_DEST" app/release-keystore.jks 2>/dev/null || true
+
+            echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/${KEYSTORE_DEST}" >> $GITHUB_ENV
+            echo "STORE_PASSWORD=android" >> $GITHUB_ENV
+            echo "KEY_ALIAS=upload" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=android" >> $GITHUB_ENV
+            echo "IS_PRODUCTION_SIGNED=false" >> $GITHUB_ENV
+            echo "ℹ️ Self-signed fallback keystore generated."
+          fi
+
+      - name: Run Unit & JVM Tests
+        run: |
+          ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Build Android Debug APK
+        run: |
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Build Android Release APK & AAB
+        run: |
+          ./gradlew assembleRelease bundleRelease --stacktrace
+
+      - name: Collect & Verify Build Artifacts
+        run: |
+          mkdir -p build-artifacts
+          
+          # Find and collect Debug APK
+          DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
+            cp "$DEBUG_APK" "build-artifacts/DubStage-debug.apk"
+            echo "✅ Collected Debug APK: $(ls -lh build-artifacts/DubStage-debug.apk)"
+          else
+            echo "⚠️ Debug APK not found."
+          fi
+
+          # Find and collect Release APK
+          RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -n "$RELEASE_APK" ] && [ -f "$RELEASE_APK" ]; then
+            cp "$RELEASE_APK" "build-artifacts/DubStage-release.apk"
+            echo "✅ Collected Release APK: $(ls -lh build-artifacts/DubStage-release.apk)"
+          else
+            echo "⚠️ Release APK not found."
+          fi
+
+          # Find and collect Release AAB
+          RELEASE_AAB=$(find app/build/outputs/bundle/release -name "*.aab" | head -n 1)
+          if [ -n "$RELEASE_AAB" ] && [ -f "$RELEASE_AAB" ]; then
+            cp "$RELEASE_AAB" "build-artifacts/DubStage-release.aab"
+            echo "✅ Collected Release AAB: $(ls -lh build-artifacts/DubStage-release.aab)"
+          else
+            echo "⚠️ Release AAB not found."
+          fi
+
+          # Generate SHA256 Checksums
+          cd build-artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          cd ..
+
+      - name: Upload APKs Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DubStage-APKs
+          path: |
+            build-artifacts/*.apk
+            build-artifacts/SHA256SUMS.txt
+          retention-days: 30
+
+      - name: Upload Android App Bundle (AAB) Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DubStage-Bundle
+          path: |
+            build-artifacts/*.aab
+          retention-days: 30
+
+      - name: Generate CI Build Summary
+        run: |
+          echo "### 🚀 DubStage Android Build Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact | File Name | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          for f in build-artifacts/*; do
+            if [ -f "$f" ]; then
+              fname=$(basename "$f")
+              fsize=$(ls -lh "$f" | awk '{print $5}')
+              echo "| **$fname** | \`$fname\` | $fsize |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### SHA-256 Checksums" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat build-artifacts/SHA256SUMS.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Clean Temporary Keystore
+        if: always()
+        run: |
+          rm -f my-upload-key.jks app/release-keystore.jks

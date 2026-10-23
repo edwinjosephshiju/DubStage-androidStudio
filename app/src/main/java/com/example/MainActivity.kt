@@ -12,6 +12,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -41,8 +43,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
+import com.example.ui.gallery.GalleryTabScreen
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -80,7 +84,8 @@ import com.example.ui.theme.StudioElevated
 
 enum class StudioTab(val title: String, val icon: ImageVector) {
     DUBFORGE("DUBFORGE", Icons.Default.GraphicEq),
-    DUBSTAGE("DUBSTAGE", Icons.Default.Mic)
+    DUBSTAGE("DUBSTAGE", Icons.Default.Mic),
+    DUBGALLERY("GALLERY", Icons.Default.Collections)
 }
 
 class MainActivity : ComponentActivity() {
@@ -209,6 +214,13 @@ fun MainStudioScreen(viewModel: DubStageViewModel) {
                         onOpenSettings = { isSettingsOpen = true }
                     )
                     StudioTab.DUBSTAGE -> StageTabScreen(viewModel = viewModel)
+                    StudioTab.DUBGALLERY -> GalleryTabScreen(
+                        viewModel = viewModel,
+                        onOpenProject = { projectId, isEditMode ->
+                            viewModel.loadProject(projectId)
+                            selectedTab = if (isEditMode) StudioTab.DUBFORGE else StudioTab.DUBSTAGE
+                        }
+                    )
                 }
             }
         }
@@ -235,12 +247,14 @@ fun StudioTopBar(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // App Branding & Status LED with DEMUCS v4 beneath DUBSTAGE, and circular settings gear in the empty space
+            // App Branding with DubStage Logo & Status
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
+                Image(
+                    painter = painterResource(id = R.drawable.ic_dubstage_logo),
+                    contentDescription = "DubStage Logo",
                     modifier = Modifier
-                        .size(10.dp)
-                        .background(StudioAccent, CircleShape)
+                        .size(30.dp)
+                        .clip(RoundedCornerShape(6.dp))
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
@@ -284,13 +298,14 @@ fun StudioTopBar(
                 }
             }
 
-            // Tab Switcher Pill
+            // Tab Switcher Pill (Icon-only for unselected tabs, Icon+Text for active tab)
             Row(
                 modifier = Modifier
                     .background(StudioCanvas, RoundedCornerShape(20.dp))
                     .border(1.dp, StudioBorder, RoundedCornerShape(20.dp))
                     .padding(3.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 StudioTab.values().forEach { tab ->
                     val isSelected = tab == selectedTab
@@ -299,25 +314,35 @@ fun StudioTopBar(
                             .clip(RoundedCornerShape(16.dp))
                             .background(if (isSelected) StudioAccent else Color.Transparent)
                             .clickable { onTabSelected(tab) }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .padding(
+                                horizontal = if (isSelected) 10.dp else 8.dp,
+                                vertical = 6.dp
+                            )
                             .testTag("tab_${tab.name.lowercase()}"),
                         contentAlignment = Alignment.Center
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
                             Icon(
                                 imageVector = tab.icon,
-                                contentDescription = null,
+                                contentDescription = tab.title,
                                 tint = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(16.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = tab.title,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                ),
-                                color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (isSelected) {
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = tab.title,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.5.sp
+                                    ),
+                                    color = Color.White,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
                 }

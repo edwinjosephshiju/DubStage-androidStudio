@@ -1,38 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <group
-        android:translateX="0"
-        android:translateY="0">
-        <!-- Studio Mic Capsule (Neon Coral #FF5376) -->
-        <path
-            android:fillColor="#FF5376"
-            android:pathData="M34,40 c0,-4.5 3.5,-8 8,-8 h1 c4.5,0 8,3.5 8,8 v13 c0,4.5 -3.5,8 -8,8 h-1 c-4.5,0 -8,-3.5 -8,-8 Z" />
-        <path
-            android:strokeColor="#1A1D26"
-            android:strokeWidth="1.5"
-            android:pathData="M36,41 h14 M36,45 h14 M36,49 h14" />
-        <!-- Mic shockmount and stand (Studio Accent Blue #4F80FF) -->
-        <path
-            android:strokeColor="#4F80FF"
-            android:strokeWidth="2.5"
-            android:strokeLineCap="round"
-            android:pathData="M30,48 c0,8.5 6.8,15.5 15.5,15.5 c8.7,0 15.5,-7 15.5,-15.5 M45.5,63.5 v10 M38,73.5 h15" />
-        <!-- Separation Stem Equalizer Waves (Mint Emerald & Studio Purple) -->
-        <path
-            android:fillColor="#9D65FF"
-            android:pathData="M59,38 h4 v32 h-4 Z" />
-        <path
-            android:fillColor="#00E5A3"
-            android:pathData="M67,34 h4 v40 h-4 Z" />
-        <path
-            android:fillColor="#4F80FF"
-            android:pathData="M75,42 h4 v24 h-4 Z" />
-        <path
-            android:fillColor="#FFB020"
-            android:pathData="M83,47 h4 v14 h-4 Z" />
-    </group>
-</vector>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:width="66dp"
+        android:height="66dp"
+        android:drawable="@drawable/ic_dubstage_logo"
+        android:gravity="center" />
+</layer-list>

@@ -27,7 +27,7 @@ abstract class DubStageDatabase : RoomDatabase() {
                     context.applicationContext,
                     DubStageDatabase::class.java,
                     "dubstage_studio.db"
-                ).fallbackToDestructiveMigration().build()
+                ).fallbackToDestructiveMigration(dropAllTables = true).build()
                 INSTANCE = instance
                 instance
             }

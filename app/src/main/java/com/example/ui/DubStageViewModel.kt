@@ -1,7 +1,10 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.ContentValues
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -135,11 +138,20 @@ class DubStageViewModel(application: Application) : AndroidViewModel(application
     private val _isExporting = MutableStateFlow(false)
     val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
 
+    private val _isSavingDubPack = MutableStateFlow(false)
+    val isSavingDubPack: StateFlow<Boolean> = _isSavingDubPack.asStateFlow()
+
+    private val _lastSavedSignature = MutableStateFlow("")
+    val lastSavedSignature: StateFlow<String> = _lastSavedSignature.asStateFlow()
+
     private val _exportedFilePath = MutableStateFlow<String?>(null)
     val exportedFilePath: StateFlow<String?> = _exportedFilePath.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    val allProjects: StateFlow<List<ProjectEntity>> = repository.allProjects
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Waveform envelope data
     private val _originalWaveformPeaks = MutableStateFlow(FloatArray(0))
@@ -200,6 +212,169 @@ class DubStageViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun loadProject(projectId: String) {
+        viewModelScope.launch {
+            try {
+                // Clear existing state before loading new project to avoid "ghost" data
+                _activeClip.value = null
+                _activeTake.value = null
+                _clips.value = emptyList()
+                _takes.value = emptyList()
+                _originalWaveformPeaks.value = FloatArray(0)
+                _vocalsWaveformPeaks.value = FloatArray(0)
+                _backingWaveformPeaks.value = FloatArray(0)
+                _activeTakePeaks.value = FloatArray(0)
+                _isPlaying.value = false
+                _playheadMs.value = 0L
+
+                val project = repository.getProjectDirect(projectId) ?: return@launch
+                _activeProject.value = project
+
+                // Setup ExoPlayer
+                withContext(Dispatchers.Main) {
+                    exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(project.videoUri)))
+                    exoPlayer.prepare()
+                    exoPlayer.pause()
+                }
+
+                // Load peaks if available
+                project.originalPcmPath?.let { path ->
+                    val file = File(path)
+                    if (file.exists()) {
+                        _originalWaveformPeaks.value = audioExtractionEngine.loadPeaksFromPcm(file)
+                    }
+                }
+
+                project.vocalsWavPath?.let { path ->
+                    val file = File(path)
+                    if (file.exists()) {
+                        _vocalsWaveformPeaks.value = audioExtractionEngine.loadPeaksFromWav(file)
+                    }
+                }
+
+                project.backingWavPath?.let { path ->
+                    val file = File(path)
+                    if (file.exists()) {
+                        _backingWaveformPeaks.value = audioExtractionEngine.loadPeaksFromWav(file)
+                    }
+                }
+
+                val clipsList = repository.getClipsForProjectDirect(projectId)
+                _clips.value = clipsList
+                if (clipsList.isNotEmpty()) {
+                    selectClip(clipsList.first().id)
+                } else {
+                    _activeClip.value = null
+                }
+
+                _lastSavedSignature.value = computeCurrentSignature(
+                    title = project.title,
+                    clipsList = clipsList,
+                    videoUriStr = project.videoUri
+                )
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to load project: ${e.message}"
+            }
+        }
+    }
+
+    fun computeCurrentSignature(
+        title: String,
+        clipsList: List<ClipEntity> = _clips.value,
+        videoUriStr: String? = _activeProject.value?.videoUri
+    ): String {
+        val cleanTitle = title.trim()
+        val isVideoPersisted = videoUriStr != null && videoUriStr.startsWith("file://") && videoUriStr.endsWith("/video.mp4")
+        val clipsSig = clipsList.joinToString(";") { 
+            "${it.id}:${it.startMs}-${it.endMs}:${it.speakerName}:${it.scriptText}:${it.activeTakeId}" 
+        }
+        return "$cleanTitle|$isVideoPersisted|$clipsSig"
+    }
+
+    fun deleteProject(project: ProjectEntity) {
+        viewModelScope.launch {
+            repository.deleteProject(project)
+            if (_activeProject.value?.id == project.id) {
+                _activeProject.value = null
+                _clips.value = emptyList()
+                _activeClip.value = null
+            }
+        }
+    }
+
+    fun updateActiveProjectTitle(newTitle: String) {
+        val project = _activeProject.value ?: return
+        viewModelScope.launch {
+            val updated = project.copy(title = newTitle, updatedAt = System.currentTimeMillis())
+            repository.updateProject(updated)
+            _activeProject.value = updated
+        }
+    }
+
+    fun updateActiveProjectVideoUri(newVideoUri: String) {
+        val project = _activeProject.value ?: return
+        viewModelScope.launch {
+            val updated = project.copy(videoUri = newVideoUri, updatedAt = System.currentTimeMillis())
+            repository.updateProject(updated)
+            _activeProject.value = updated
+            try {
+                exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(newVideoUri)))
+                exoPlayer.prepare()
+            } catch (e: Exception) {
+                Log.w("DubStageVM", "Could not re-prepare ExoPlayer with new URI", e)
+            }
+        }
+    }
+
+    fun saveDubPack(newTitle: String, onComplete: (isSuccess: Boolean, message: String) -> Unit) {
+        val project = _activeProject.value
+        if (project == null) {
+            onComplete(false, "No active scene or video loaded to save.")
+            return
+        }
+        val cleanTitle = newTitle.trim().ifEmpty { project.title }
+        viewModelScope.launch {
+            _isSavingDubPack.value = true
+            try {
+                // 1. Physically persist the video to the project directory
+                val persistedProject = repository.persistProjectVideo(project)
+
+                // 2. Update title and timestamp
+                val updated = persistedProject.copy(
+                    title = cleanTitle,
+                    updatedAt = System.currentTimeMillis()
+                )
+                repository.updateProject(updated)
+                _activeProject.value = updated
+
+                // 3. Keep ExoPlayer in sync with local video URI
+                withContext(Dispatchers.Main) {
+                    val currentItemUri = exoPlayer.currentMediaItem?.localConfiguration?.uri?.toString()
+                    if (currentItemUri != updated.videoUri) {
+                        val currentPos = exoPlayer.currentPosition
+                        exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(updated.videoUri)))
+                        exoPlayer.prepare()
+                        exoPlayer.seekTo(currentPos)
+                    }
+                }
+
+                // 4. Update the saved state signature so the button greys out immediately
+                _lastSavedSignature.value = computeCurrentSignature(
+                    title = cleanTitle,
+                    clipsList = _clips.value,
+                    videoUriStr = updated.videoUri
+                )
+
+                onComplete(true, "DubPack \"$cleanTitle\" was saved successfully with its video file, stems, and dialogue cues to your DubGallery.")
+            } catch (e: Exception) {
+                Log.e("DubStageViewModel", "Error saving DubPack", e)
+                onComplete(false, e.localizedMessage ?: e.message ?: "Failed to save DubPack with video.")
+            } finally {
+                _isSavingDubPack.value = false
+            }
+        }
+    }
+
     init {
         // Observe ExoPlayer playback state
         exoPlayer.addListener(object : Player.Listener {
@@ -219,6 +394,15 @@ class DubStageViewModel(application: Application) : AndroidViewModel(application
             try {
                 _isExtractingAudio.value = true
                 _extractionPercent.value = 0
+                
+                // Reset peaks, clips, and saved state for the new ingestion
+                _originalWaveformPeaks.value = FloatArray(0)
+                _vocalsWaveformPeaks.value = FloatArray(0)
+                _backingWaveformPeaks.value = FloatArray(0)
+                _clips.value = emptyList()
+                _activeClip.value = null
+                _lastSavedSignature.value = ""
+                
                 val project = repository.createProject(
                     title = title,
                     videoUri = videoUri.toString(),
@@ -226,22 +410,45 @@ class DubStageViewModel(application: Application) : AndroidViewModel(application
                     width = width,
                     height = height
                 )
-                _activeProject.value = project
 
-                // Setup ExoPlayer
+                // Immediately save the video into internal app storage (context.filesDir)
+                val localVideoFile = File(repository.getProjectDir(project.id), "video.mp4")
+                var effectiveUri = videoUri
+                try {
+                    val stream = getApplication<Application>().contentResolver.openInputStream(videoUri)
+                        ?: if (videoUri.scheme == "file") File(videoUri.path ?: "").inputStream() else null
+                    if (stream != null) {
+                        stream.use { input ->
+                            localVideoFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        if (localVideoFile.exists() && localVideoFile.length() > 0) {
+                            effectiveUri = Uri.fromFile(localVideoFile)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("DubStageVM", "Non-fatal: could not pre-copy video to internal storage", e)
+                }
+
+                val initializedProject = project.copy(videoUri = effectiveUri.toString())
+                repository.updateProject(initializedProject)
+                _activeProject.value = initializedProject
+
+                // Setup ExoPlayer with internal storage URI
                 withContext(Dispatchers.Main) {
-                    exoPlayer.setMediaItem(MediaItem.fromUri(videoUri))
+                    exoPlayer.setMediaItem(MediaItem.fromUri(effectiveUri))
                     exoPlayer.prepare()
                 }
 
                 // Extract audio via MediaExtractor & MediaCodec to 44.1kHz stereo PCM
-                val pcmFile = File(project.originalPcmPath!!)
-                val result = audioExtractionEngine.extractAndDecodeAudio(videoUri, pcmFile) { pct, _ ->
+                val pcmFile = File(initializedProject.originalPcmPath!!)
+                val result = audioExtractionEngine.extractAndDecodeAudio(effectiveUri, pcmFile) { pct, _ ->
                     _extractionPercent.value = pct
                 }
 
                 _originalWaveformPeaks.value = result.waveformPeaks
-                val updatedProj = project.copy(
+                val updatedProj = initializedProject.copy(
                     status = ProjectEntity.STATUS_AUDIO_EXTRACTED,
                     videoDurationMs = result.durationMs
                 )
@@ -1086,6 +1293,72 @@ class DubStageViewModel(application: Application) : AndroidViewModel(application
         _isExporting.value = false
         _exportProgress.value = null
         _errorMessage.value = "Export cancelled."
+    }
+
+    fun saveExportedVideoToGallery(filePath: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val file = File(filePath)
+                if (!file.exists()) {
+                    withContext(Dispatchers.Main) { onResult(false, "File not found") }
+                    return@launch
+                }
+
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/DubStage")
+                        put(MediaStore.Video.Media.IS_PENDING, 1)
+                    }
+                }
+
+                val resolver = getApplication<Application>().contentResolver
+                val videoUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues)
+                    ?: throw IllegalStateException("Failed to create MediaStore entry in Movies/DubStage")
+
+                resolver.openOutputStream(videoUri)?.use { out ->
+                    file.inputStream().use { input ->
+                        input.copyTo(out)
+                    }
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    contentValues.clear()
+                    contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
+                    resolver.update(videoUri, contentValues, null, null)
+                }
+
+                withContext(Dispatchers.Main) {
+                    onResult(true, "Saved to Movies/DubStage in your Device Gallery!")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Failed to save to Gallery: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun copyExportedVideoToUri(sourceFilePath: String, destinationUri: Uri, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val file = File(sourceFilePath)
+                val resolver = getApplication<Application>().contentResolver
+                resolver.openOutputStream(destinationUri)?.use { out ->
+                    file.inputStream().use { input ->
+                        input.copyTo(out)
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    onResult(true, "Video exported successfully to selected storage location!")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Failed to export: ${e.message}")
+                }
+            }
+        }
     }
 
     fun dismissExportDialog() {

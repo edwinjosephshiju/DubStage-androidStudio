@@ -1,11 +1,15 @@
 package com.example.data.repository
 
 import android.content.Context
+import android.net.Uri
+import android.util.Log
 import com.example.data.dao.DubStageDao
 import com.example.data.model.ClipEntity
 import com.example.data.model.ProjectEntity
 import com.example.data.model.TakeEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
@@ -61,6 +65,57 @@ class DubStageRepository(
 
     suspend fun updateProject(project: ProjectEntity) {
         dao.updateProject(project.copy(updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun persistProjectVideo(project: ProjectEntity): ProjectEntity = withContext(Dispatchers.IO) {
+        val projectDir = getProjectDir(project.id)
+        val localVideoFile = File(projectDir, "video.mp4")
+
+        val currentUri = Uri.parse(project.videoUri)
+        // If it's already pointing to localVideoFile and file exists with content, no copy needed
+        if (currentUri.scheme == "file" && currentUri.path == localVideoFile.absolutePath && localVideoFile.exists() && localVideoFile.length() > 0) {
+            return@withContext project
+        }
+
+        try {
+            val inputStream = context.contentResolver.openInputStream(currentUri)
+                ?: if (currentUri.scheme == "file") File(currentUri.path ?: "").inputStream() else null
+
+            if (inputStream != null) {
+                inputStream.use { input ->
+                    localVideoFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                val updated = project.copy(
+                    videoUri = Uri.fromFile(localVideoFile).toString(),
+                    updatedAt = System.currentTimeMillis()
+                )
+                dao.updateProject(updated)
+                return@withContext updated
+            } else {
+                if (localVideoFile.exists() && localVideoFile.length() > 0) {
+                    val updated = project.copy(
+                        videoUri = Uri.fromFile(localVideoFile).toString(),
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    dao.updateProject(updated)
+                    return@withContext updated
+                }
+                return@withContext project
+            }
+        } catch (e: Exception) {
+            Log.w("DubStageRepo", "Non-fatal: could not copy video stream into internal storage: ${e.message}")
+            if (localVideoFile.exists() && localVideoFile.length() > 0) {
+                val updated = project.copy(
+                    videoUri = Uri.fromFile(localVideoFile).toString(),
+                    updatedAt = System.currentTimeMillis()
+                )
+                dao.updateProject(updated)
+                return@withContext updated
+            }
+            return@withContext project
+        }
     }
 
     suspend fun deleteProject(project: ProjectEntity) {
